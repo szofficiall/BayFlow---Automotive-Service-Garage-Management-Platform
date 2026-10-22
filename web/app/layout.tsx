@@ -1,14 +1,20 @@
+
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
-// @ts-expect-error The stylesheet is loaded by the framework at runtime.
+// @ts-expect-error Next.js handles global CSS imports at runtime.
 import "./bayflow.css";
 
-export const metadata = {
-  title: "BayFlow | Premium Automotive Service Platform",
+export const metadata: Metadata = {
+  title: "BayFlow | Automotive Service Platform",
   description:
-    "Book automotive services and manage garages, teams, repairs, parts and quality control in one connected experience.",
+    "A modern automotive service platform for booking appointments, managing garages, tracking repairs and quality control.",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body>{children}</body>
