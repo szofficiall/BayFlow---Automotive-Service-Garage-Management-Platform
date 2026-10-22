@@ -4,6 +4,9 @@ BayFlow is a modern, full-stack automotive service management web application bu
 
 The project includes a responsive, animated user interface with light and dark themes and role-based workspaces. It is designed as a **local hackathon prototype** to demonstrate a complete workshop service journey across multiple garages.
 
+**Developed by Sultan Zaib — Python Engineer | Backend Engineer**
+
+
 ## Overview
 
 Traditional garage operations often depend on phone calls, handwritten job cards, and disconnected records. This can make it difficult for customers to follow repairs and for garage teams to coordinate inspections, estimates, parts, and quality checks.
@@ -106,11 +109,11 @@ npm --version
 
 ## Installation
 
-Clone your GitHub repository (replace the placeholder with your own repository URL):
+Clone the project repository:
 
 ```powershell
-git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
-cd YOUR_REPOSITORY
+git clone https://github.com/szofficiall/BayFlow---Automotive-Service-Garage-Management-Platform.git
+cd BayFlow---Automotive-Service-Garage-Management-Platform
 ```
 
 Alternatively, extract the project ZIP and open the **BayFlow** project folder in Visual Studio Code.
@@ -419,3 +422,12 @@ Issues and pull requests are welcome for improvements to the interface, document
 ## Project Status
 
 **Local prototype / hackathon demonstration.** This repository is intended for learning, review, and further development. It must be independently tested and secured before use in a production environment.
+
+## Developer
+
+**Sultan Zaib**  
+**Python Engineer | Backend Engineer**  
+GitHub: [szofficiall](https://github.com/szofficiall)  
+Project Repository: [BayFlow — Automotive Service & Garage Management Platform](https://github.com/szofficiall/BayFlow---Automotive-Service-Garage-Management-Platform.git)
+
+This project demonstrates full-stack application development, structured backend workflows, role-based access control, REST API integration, and responsive user-interface development.
