@@ -1,0 +1,13 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+const location=path.join(process.cwd(),'data.json');
+export const uid=()=>crypto.randomUUID();
+export const hash=(p)=>{const salt=crypto.randomBytes(16).toString('hex');return `${salt}:${crypto.scryptSync(p,salt,64).toString('hex')}`};
+export const matches=(p,h)=>{try{const [salt,expected]=h.split(':');return crypto.timingSafeEqual(Buffer.from(expected,'hex'),crypto.scryptSync(p,salt,64))}catch{return false}};
+export const read=()=>JSON.parse(fs.readFileSync(location,'utf8'));
+export const write=(db)=>{const temp=location+'.tmp';fs.writeFileSync(temp,JSON.stringify(db,null,2));fs.renameSync(temp,location)};
+export const initialize=()=>{if(!fs.existsSync(location))write({users:[],shops:[],memberships:[],services:[],slots:[],bookings:[],inventory:[],purchaseOrders:[],notifications:[],sessions:[],audit:[]})};
+export const publicUser=(u)=>u&&({id:u.id,name:u.name,email:u.email});
+export const log=(db,b,actor,action,detail='')=>db.audit.push({id:uid(),bookingId:b.id,shopId:b.shopId,actorId:actor,action,detail,at:new Date().toISOString()});
+export const notify=(db,userId,text,bookingId)=>db.notifications.unshift({id:uid(),userId,text,bookingId,read:false,at:new Date().toISOString()});
