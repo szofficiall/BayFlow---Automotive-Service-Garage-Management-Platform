@@ -1,1614 +1,349 @@
 "use client";
-import { useEffect, useState } from "react";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, MotionConfig, motion, useReducedMotion, useScroll, useSpring } from "framer-motion";
+import PageCurtain, { type PageCurtainPhase } from "./PageCurtain";
 import {
-  ArrowRight,
-  ArrowUpRight,
-  CarFront,
-  CheckCircle2,
-  ChevronDown,
-  Clock3,
-  ClipboardCheck,
-  Command,
-  MapPin,
-  GitBranch,
-  Layers3,
-  LockKeyhole,
-  Menu,
-  Moon,
-  PackageCheck,
-  Phone,
-  Plus,
-  Settings2,
-  ShieldCheck,
-  SlidersHorizontal,
-  Sparkles,
-  Sun,
-  TrendingUp,
-  Users2,
-  Wrench,
-  X,
-  Zap,
+  ArrowRight, ArrowUpRight, CalendarDays, CarFront, Check, CheckCircle2,
+  ChevronLeft, ChevronRight, Clock3, ClipboardCheck, Eye, EyeOff, Gauge,
+  GitBranch, Layers3, LockKeyhole, MapPin, Menu, Moon, PackageCheck,
+  Plus, ShieldCheck, Sparkles, Sun, TrendingUp, Users2, Wrench, X, Zap,
+  Settings2, LogOut, Search, Activity, BadgeCheck, CircleHelp,
 } from "lucide-react";
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-const api = async (path: string, method = "GET", body?: any) => {
-  const token =
-    typeof window !== "undefined"
-      ? localStorage.getItem("bayflow-token")
-      : null;
-  const r = await fetch(BASE + "/api" + path, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error || "Request failed");
+
+// Local development uses the Express port. On Vercel, /api stays on the same origin.
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL ??
+  (process.env.NODE_ENV === "development" ? "http://localhost:4000" : "")).replace(/\/$/, "");
+const SHOW_DEMO = process.env.NODE_ENV === "development";
+const DEMO_PASSWORD = "Demo@12345";
+const DEMO_ROLES = [
+  { role: "Customer", email: "customer@bayflow.demo", label: "Book and track repairs" },
+  { role: "Owner", email: "owner@bayflow.demo", label: "Manage garages & teams" },
+  { role: "Service Advisor", email: "advisor@bayflow.demo", label: "Coordinate the workflow" },
+  { role: "Technician", email: "technician@bayflow.demo", label: "Inspect and repair" },
+  { role: "Parts Person", email: "parts@bayflow.demo", label: "Manage parts & stock" },
+  { role: "QC Inspector", email: "qc@bayflow.demo", label: "Verify repair quality" },
+];
+const STAGES = [
+  "PENDING", "CONFIRMED", "ASSIGNED", "INSPECTING", "ESTIMATE_REVIEW",
+  "AWAITING_CUSTOMER", "ESTIMATE_APPROVED", "PARTS_PENDING", "PARTS_ORDERED",
+  "PARTS_READY", "IN_REPAIR", "QC_PENDING", "QC_IN_PROGRESS",
+  "READY_FOR_PICKUP", "COMPLETED",
+];
+const FEATURES = [
+  { icon: CalendarDays, title: "Effortless booking", text: "Reserve the right service and appointment slot in a few clicks.", code: "01" },
+  { icon: GitBranch, title: "Connected workflows", text: "Keep advisors, technicians and customers in perfect sync.", code: "02" },
+  { icon: ShieldCheck, title: "Quality, verified", text: "Independent inspections and an accountable rework loop.", code: "03" },
+  { icon: PackageCheck, title: "Smarter inventory", text: "Know what is in stock, what is ordered and what is allocated.", code: "04" },
+  { icon: Users2, title: "Purpose-built roles", text: "A tailored workspace for every person in the service journey.", code: "05" },
+  { icon: TrendingUp, title: "Actionable insights", text: "A clear view of throughput, active jobs and workshop revenue.", code: "06" },
+];
+const pretty = (value: string) => String(value || "").replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (a) => a.toUpperCase());
+const money = (n: number) => `PKR ${Number(n || 0).toLocaleString()}`;
+const initialVehicle = { plate: "", make: "", model: "", year: "2022", color: "", mileage: "" };
+
+async function api(path: string, method = "GET", body?: unknown) {
+  const token = typeof window === "undefined" ? null : localStorage.getItem("bayflow-token");
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api${path}`, {
+      method, cache: "no-store",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  } catch {
+    throw new Error(`API unreachable. Check ${API_BASE || "this website"}/api/health and confirm the Express backend is running.`);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `API request failed (${res.status})`);
   return data;
-};
-const steps = [
-  "PENDING",
-  "CONFIRMED",
-  "ASSIGNED",
-  "INSPECTING",
-  "ESTIMATE_REVIEW",
-  "AWAITING_CUSTOMER",
-  "ESTIMATE_APPROVED",
-  "ESTIMATE_REJECTED",
-  "PARTS_PENDING",
-  "PARTS_ORDERED",
-  "PARTS_READY",
-  "IN_REPAIR",
-  "QC_PENDING",
-  "QC_IN_PROGRESS",
-  "READY_FOR_PICKUP",
-  "COMPLETED",
-];
-const pretty = (s: string) =>
-  s
-    ?.replaceAll("_", " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-const features = [
-  {
-    icon: <CarFront />,
-    title: "Effortless booking",
-    desc: "Discover your trusted garage, pick a service and reserve a real slot in minutes.",
-  },
-  {
-    icon: <GitBranch />,
-    title: "One clear workflow",
-    desc: "Track every handoff — from check-in and inspection to repair and final pickup.",
-  },
-  {
-    icon: <ShieldCheck />,
-    title: "Quality first",
-    desc: "Mandatory independent quality checks and a built-in rework loop.",
-  },
-  {
-    icon: <PackageCheck />,
-    title: "Inventory in sync",
-    desc: "Know what is in stock, what is missing and what is ready for repair.",
-  },
-  {
-    icon: <Users2 />,
-    title: "Built for teams",
-    desc: "Dedicated workspaces for owners, advisors, technicians, parts and QC.",
-  },
-  {
-    icon: <TrendingUp />,
-    title: "Clearer decisions",
-    desc: "Operational visibility across locations, bookings and service performance.",
-  },
-];
-const initialVehicle = {
-  plate: "",
-  make: "",
-  model: "",
-  year: "2022",
-  color: "",
-  mileage: "",
-};
+}
+
+const entrance = { hidden: { opacity: 0, y: 30 }, show: { opacity: 1, y: 0 } };
+function Reveal({ children, className = "", delay = 0 }: { children: React.ReactNode; className?: string; delay?: number }) {
+  return (
+    <motion.div className={className} variants={entrance} initial="hidden" whileInView="show"
+      viewport={{ once: true, amount: 0.12 }} transition={{ duration: 0.65, delay, ease: [0.22, 1, 0.36, 1] }}>
+      {children}
+    </motion.div>
+  );
+}
+function IconButton({ children, onClick, title }: { children: React.ReactNode; onClick: () => void; title: string }) {
+  return <motion.button aria-label={title} title={title} className="bf-icon-btn" whileHover={{ scale: 1.07 }} whileTap={{ scale: 0.94 }} onClick={onClick}>{children}</motion.button>;
+}
+
 export default function Home() {
-  const [dark, setDark] = useState(true),
-    [view, setView] = useState("home"),
-    [shops, setShops] = useState<any[]>([]),
-    [selected, setSelected] = useState<any>(null),
-    [services, setServices] = useState<string[]>([]),
-    [slot, setSlot] = useState(""),
-    [vehicle, setVehicle] = useState(initialVehicle),
-    [notes, setNotes] = useState(""),
-    [step, setStep] = useState(1),
-    [account, setAccount] = useState<any>(null),
-    [memberships, setMemberships] = useState<any[]>([]),
-    [bookings, setBookings] = useState<any[]>([]),
-    [activeBooking, setActiveBooking] = useState<any>(null),
-    [shopId, setShopId] = useState(""),
-    [authMode, setAuthMode] = useState("login"),
-    [email, setEmail] = useState(""),
-    [password, setPassword] = useState(""),
-    [name, setName] = useState(""),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [success, setSuccess] = useState(""),
-    [menu, setMenu] = useState(false),
-    [form, setForm] = useState<any>({}),
-    [analytics, setAnalytics] = useState<any>(null);
-  const loadShops = async () => {
-    try {
-      const data = await api("/shops");
-      setShops(data);
-    } catch {
-      setError("Cannot connect to API. Start the server with npm run dev.");
-    }
-  };
-  const loadUser = async () => {
+  const [dark, setDark] = useState(true);
+  const [view, setView] = useState("home");
+  const [curtainPhase, setCurtainPhase] = useState<PageCurtainPhase>("idle");
+  const navigatingRef = useRef(false);
+  const navigationTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const prefersReducedMotion = useReducedMotion();
+  const [mobileMenu, setMobileMenu] = useState(false);
+  const [shops, setShops] = useState<any[]>([]);
+  const [selectedShop, setSelectedShop] = useState<any>(null);
+  const [services, setServices] = useState<string[]>([]);
+  const [slot, setSlot] = useState("");
+  const [vehicle, setVehicle] = useState(initialVehicle);
+  const [notes, setNotes] = useState("");
+  const [step, setStep] = useState(1);
+  const [account, setAccount] = useState<any>(null);
+  const [memberships, setMemberships] = useState<any[]>([]);
+  const [shopId, setShopId] = useState("");
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [currentBooking, setCurrentBooking] = useState<any>(null);
+  const [analytics, setAnalytics] = useState<any>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [demoRole, setDemoRole] = useState("Customer");
+  const [afterLogin, setAfterLogin] = useState("dashboard");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [form, setForm] = useState<any>({});
+  const [query, setQuery] = useState("");
+  const { scrollYProgress } = useScroll();
+  const scaleX = useSpring(scrollYProgress, { stiffness: 120, damping: 30 });
+
+  const loadShops = useCallback(async () => {
+    try { setShops(await api("/shops")); }
+    catch (e: any) { setError(e.message); }
+  }, []);
+  const loadUser = useCallback(async () => {
     try {
       const d = await api("/me");
       setAccount(d.user);
-      setMemberships(d.memberships);
-      setShopId((old) => old || d.memberships[0]?.shopId || "");
-    } catch {
-      localStorage.removeItem("bayflow-token");
-    }
-  };
-  const loadBookings = async () => {
+      setMemberships(d.memberships || []);
+      setShopId((s) => s || d.memberships?.[0]?.shopId || "");
+    } catch { localStorage.removeItem("bayflow-token"); setAccount(null); }
+  }, []);
+  const loadBookings = useCallback(async (id: string) => {
     try {
       setBookings(await api("/bookings"));
-      if (shopId)
-        setAnalytics(await api(`/analytics/${shopId}`).catch(() => null));
-    } catch (e: any) {
-      setError(e.message);
-    }
-  };
+      setAnalytics(id ? await api(`/analytics/${id}`).catch(() => null) : null);
+    } catch (e: any) { setError(e.message); }
+  }, []);
   const loadBooking = async (id: string) => {
-    try {
-      setActiveBooking(await api("/bookings/" + id));
-      setForm({});
-      setView("booking");
-      window.scrollTo(0, 0);
-    } catch (e: any) {
-      setError(e.message);
-    }
+    try { setCurrentBooking(await api(`/bookings/${id}`)); setForm({}); navigate("booking"); }
+    catch (e: any) { setError(e.message); }
   };
+
   useEffect(() => {
     setDark(localStorage.getItem("bayflow-theme") !== "light");
     loadShops();
     if (localStorage.getItem("bayflow-token")) loadUser();
-  }, []);
+  }, [loadShops, loadUser]);
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     localStorage.setItem("bayflow-theme", dark ? "dark" : "light");
   }, [dark]);
+  useEffect(() => { if (account) loadBookings(shopId); }, [account, shopId, loadBookings]);
   useEffect(() => {
-    if (account) loadBookings();
-  }, [account, shopId]);
-  const go = (v: string) => {
-    setView(v);
+    return () => {
+      navigationTimers.current.forEach(clearTimeout);
+    };
+  }, []);
+
+  function navigate(next: string) {
+    setMobileMenu(false);
+    if (navigatingRef.current || next === view) return;
+
     setError("");
-    setSuccess("");
-    setMenu(false);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-  const run = async (fn: () => Promise<any>) => {
-    setBusy(true);
-    setError("");
-    setSuccess("");
-    try {
-      await fn();
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
+    if (prefersReducedMotion) {
+      setView(next);
+      window.scrollTo(0, 0);
+      return;
     }
-  };
-  const submitAuth = () =>
-    run(async () => {
+
+    navigatingRef.current = true;
+    setCurtainPhase("cover");
+
+    // Wait until all mosaic tiles have covered the current screen.
+    navigationTimers.current.push(setTimeout(() => {
+      setView(next);
+      window.scrollTo(0, 0);
+      // Allow AnimatePresence to mount the next view underneath the curtain.
+      navigationTimers.current.push(setTimeout(() => {
+        setCurtainPhase("reveal");
+      }, 260));
+    }, 980));
+
+    navigationTimers.current.push(setTimeout(() => {
+      setCurtainPhase("idle");
+      navigatingRef.current = false;
+      navigationTimers.current = [];
+    }, 2260));
+  }
+  async function run(fn: () => Promise<void>) {
+    setBusy(true); setError(""); setSuccess("");
+    try { await fn(); } catch (e: any) { setError(e.message || "Something went wrong"); }
+    finally { setBusy(false); }
+  }
+  function chooseShop(shop: any) {
+    setSelectedShop(shop); setServices([]); setSlot(""); setStep(1);
+    navigate("reserve");
+  }
+  function selectDemo(role: typeof DEMO_ROLES[number]) {
+    setDemoRole(role.role); setEmail(role.email); setPassword(DEMO_PASSWORD); setAuthMode("login");
+  }
+  async function submitAuth() {
+    await run(async () => {
       if (authMode === "register") {
         await api("/register", "POST", { name, email, password });
-        setSuccess("Account created. Please sign in.");
-        setAuthMode("login");
-        return;
+        setAuthMode("login"); setSuccess("Account created. You can now sign in."); return;
       }
-      const d = await api("/login", "POST", { email, password });
-      localStorage.setItem("bayflow-token", d.token);
-      setAccount(d.user);
-      setMemberships(d.memberships);
-      setShopId(d.memberships[0]?.shopId || "");
-      go("dashboard");
+      const data = await api("/login", "POST", { email, password });
+      localStorage.setItem("bayflow-token", data.token);
+      setAccount(data.user); setMemberships(data.memberships || []);
+      setShopId(data.memberships?.[0]?.shopId || "");
+      navigate(afterLogin); setAfterLogin("dashboard");
     });
-  const submitBooking = () =>
-    run(async () => {
-      if (!account) {
-        setSuccess("Sign in to finish your booking.");
-        go("auth");
-        return;
-      }
-      const b = await api("/bookings", "POST", {
-        shopId: selected.id,
-        serviceIds: services,
-        slotId: slot,
-        vehicle,
-        notes,
+  }
+  async function submitBooking() {
+    if (!account) { setAfterLogin("reserve"); navigate("auth"); return; }
+    await run(async () => {
+      const created = await api("/bookings", "POST", {
+        shopId: selectedShop.id, serviceIds: services, slotId: slot, vehicle, notes,
       });
-      await loadShops();
-      await loadBookings();
-      await loadBooking(b.id);
-      setSuccess("Appointment requested successfully!");
+      await loadShops(); await loadBookings(shopId);
+      setCurrentBooking(await api(`/bookings/${created.id}`));
+      navigate("booking"); setSuccess("Your appointment request was created.");
     });
-  const act = (action: string, extra: any = {}) =>
-    run(async () => {
-      const b = await api("/bookings/" + activeBooking.id + "/action", "POST", {
-        action,
-        ...extra,
-      });
-      await loadBooking(b.id);
-      await loadBookings();
+  }
+  async function action(actionName: string, extra: any = {}) {
+    if (!currentBooking) return;
+    await run(async () => {
+      await api(`/bookings/${currentBooking.id}/action`, "POST", { action: actionName, ...extra });
+      setCurrentBooking(await api(`/bookings/${currentBooking.id}`));
+      setForm({}); await loadBookings(shopId);
       setSuccess("Booking updated successfully.");
     });
-  const logout = () => {
-    localStorage.removeItem("bayflow-token");
-    setAccount(null);
-    setMemberships([]);
-    setBookings([]);
-    go("home");
-  };
-  const activeShop = shops.find((s) => s.id === shopId);
+  }
+  function logout() {
+    localStorage.removeItem("bayflow-token"); setAccount(null);
+    setMemberships([]); setBookings([]); navigate("home");
+  }
   const role = memberships.find((m) => m.shopId === shopId)?.role || "customer";
-  const bookingBtn = (label: string, action: string, extra: any = {}) => (
-    <button
-      disabled={busy}
-      className="btn primary"
-      onClick={() => act(action, extra)}
-    >
-      {label}
-      <ArrowRight size={16} />
-    </button>
-  );
+  const activeShop = shops.find((s) => s.id === shopId);
+  const visibleShops = shops.filter((s) => `${s.name} ${s.address} ${s.description}`.toLowerCase().includes(query.toLowerCase()));
+  const activeCount = bookings.filter((b) => !["COMPLETED", "CANCELLED"].includes(b.status)).length;
+  const finishedCount = bookings.filter((b) => b.status === "COMPLETED").length;
+  const btn = (text: string, actionName: string, extra: any = {}) => <button className="bf-btn bf-primary" disabled={busy} onClick={() => action(actionName, extra)}>{text}<ArrowUpRight size={17} /></button>;
+
   return (
-    <main>
-      <div className="ambient ambient-one" />
-      <div className="ambient ambient-two" />
-      <div className="announcement">
-        <span className="pulse" /> THE NEW STANDARD IN AUTOMOTIVE CARE{" "}
-        <span className="hide-mobile">— ALL IN ONE PLACE</span>{" "}
-        <ArrowUpRight size={13} />
+    <MotionConfig reducedMotion="user">
+      <div className="bf-app">
+        <PageCurtain phase={curtainPhase} />
+        <motion.div className="bf-scroll-progress" style={{ scaleX }} />
+        <div className="bf-mesh" aria-hidden="true" />
+        <div className="bf-announcement"><span className="bf-live-dot" /> THE NEW STANDARD IN AUTOMOTIVE CARE <span className="bf-hide-mobile">— ONE CONNECTED EXPERIENCE</span><ArrowUpRight size={13} /></div>
+        <header className="bf-header bf-container">
+          <button className="bf-logo" onClick={() => navigate("home")} aria-label="BayFlow home"><span className="bf-logo-icon"><Layers3 size={25} /></span><span>bay<span className="bf-logo-accent">flow</span><small>THE AUTO SERVICE PLATFORM</small></span></button>
+          <nav className={`bf-nav ${mobileMenu ? "bf-nav-open" : ""}`} aria-label="Main navigation">
+            {[{ title: "Home", page: "home" }, { title: "Find a garage", page: "shops" }, { title: "Platform", page: "features" }, ...(account ? [{ title: "Dashboard", page: "dashboard" }] : [])].map((n) => <button className={view === n.page ? "bf-nav-active" : ""} key={n.page} onClick={() => navigate(n.page)}>{n.title}</button>)}
+          </nav>
+          <div className="bf-header-actions">
+            <IconButton title="Toggle theme" onClick={() => setDark((v) => !v)}>{dark ? <Sun size={19} /> : <Moon size={19} />}</IconButton>
+            {account ? <button className="bf-btn bf-outline bf-signin" onClick={logout}>Sign out <LogOut size={16} /></button> : <button className="bf-btn bf-outline bf-signin" onClick={() => navigate("auth")}>Sign in <ArrowUpRight size={16} /></button>}
+            <IconButton title="Toggle navigation" onClick={() => setMobileMenu(!mobileMenu)}>{mobileMenu ? <X size={19} /> : <Menu size={19} />}</IconButton>
+          </div>
+        </header>
+
+        <AnimatePresence>
+          {(error || success) && <motion.div key={error ? "error" : "success"} className={`bf-toast ${error ? "bf-error" : "bf-success"}`} role="status" initial={{ opacity: 0, x: 60 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 60 }}><span>{error || success}</span><button onClick={() => { setError(""); setSuccess(""); }} aria-label="Dismiss"><X size={17} /></button></motion.div>}
+        </AnimatePresence>
+
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div key={view} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -14 }} transition={{ duration: 0.28 }}>
+
+            {view === "home" && <>
+              <section className="bf-hero bf-container">
+                <div className="bf-hero-copy">
+                  <motion.div className="bf-eyebrow bf-pill" initial={{ opacity: 0, y: 25 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14 }}><span className="bf-live-dot" /> THE OPERATING SYSTEM FOR MODERN GARAGES <ArrowUpRight size={15} /></motion.div>
+                  <motion.h1 initial={{ opacity: 0, y: 55 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.23, duration: 0.8, ease: [0.2, 0.8, 0.2, 1] }}>Every repair,<br /><span className="bf-gradient-text">reimagined.</span></motion.h1>
+                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.48 }}>One beautiful service journey connecting drivers, garages and teams — from the first appointment to the final quality check.</motion.p>
+                  <motion.div className="bf-hero-buttons" initial={{ opacity: 0, y: 22 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.62 }}><motion.button whileHover={{ y: -4, scale: 1.025 }} whileTap={{ scale: 0.97 }} className="bf-btn bf-primary bf-large" onClick={() => navigate("shops")}>Book your service <ArrowUpRight size={18} /></motion.button><button className="bf-btn bf-quiet bf-large" onClick={() => navigate("features")}>Explore the platform <ArrowRight size={18} /></button></motion.div>
+                  <div className="bf-trust"><div className="bf-avatars"><span>AZ</span><span>MK</span><span>SA</span></div><div><strong>Built for workshops that care</strong><small>Transparent service. Clear ownership. Less friction.</small></div></div>
+                </div>
+                <motion.div className="bf-hero-art" initial={{ opacity: 0, rotateY: -16, x: 50 }} animate={{ opacity: 1, rotateY: -7, x: 0 }} transition={{ duration: 1, delay: 0.35 }}>
+                  <div className="bf-radar" />
+                  <motion.div className="bf-visual-panel" animate={{ y: [0, -9, 0] }} transition={{ duration: 8, ease: "easeInOut", repeat: Infinity }}>
+                    <div className="bf-visual-top"><span>● &nbsp; ● &nbsp; ●</span><span>WORKSHOP OVERVIEW</span><span className="bf-green">● Live</span></div>
+                    <div className="bf-visual-body"><span className="bf-eyebrow">WORKSHOP INTELLIGENCE</span><h3>Your workflow.<br />Beautifully in sync.</h3><div className="bf-visual-kpis"><div><small>Active jobs</small><strong>24<span>↗</span></strong></div><div><small>Completed</small><strong>86<span>↗</span></strong></div></div><div className="bf-chart">{[38, 56, 46, 70, 59, 88, 75, 100, 83].map((h, i) => <motion.i key={i} initial={{ height: 0 }} animate={{ height: `${h}%` }} transition={{ delay: 0.85 + i * 0.07, duration: 0.65 }} />)}</div><div className="bf-visual-complete"><CheckCircle2 size={17} /> Quality check passed <span>JUST NOW</span></div></div>
+                  </motion.div>
+                  <motion.div className="bf-floating bf-float-one" animate={{ y: [0, -13, 0] }} transition={{ repeat: Infinity, duration: 6 }}><span className="bf-float-icon"><Wrench size={20} /></span><div><strong>Repair in progress</strong><small>Honda Civic · Job #2048</small></div><b>ACTIVE</b></motion.div>
+                  <motion.div className="bf-floating bf-float-two" animate={{ y: [0, 11, 0] }} transition={{ repeat: Infinity, duration: 7 }}><span className="bf-float-icon bf-float-green"><ShieldCheck size={20} /></span><div><strong>Quality approved</strong><small>Ready for collection</small></div><CheckCircle2 className="bf-green" size={20} /></motion.div>
+                </motion.div>
+              </section>
+              <Reveal className="bf-container bf-trustbar"><span>ONE SEAMLESS WORKFLOW</span><b>01 / Discover & book</b><i /><b>02 / Inspect & approve</b><i /><b>03 / Repair & verify</b></Reveal>
+              <div className="bf-container bf-statstrip">{[["06", "Dedicated user roles"], ["01", "Connected platform"], ["24/7", "Online booking access"], ["360°", "Service journey visibility"]].map(([n, t], i) => <Reveal key={n} delay={i * 0.08}><strong>{n}</strong><span>{t}</span></Reveal>)}</div>
+              <section className="bf-container bf-section"><Reveal className="bf-section-heading"><div><span className="bf-eyebrow">WHY BAYFLOW / 01</span><h2>One platform.<br /><span className="bf-muted">Every moving part.</span></h2></div><p>No scattered spreadsheets. No lost handovers. Just a connected service experience designed around real workflows.</p></Reveal><div className="bf-feature-grid">{FEATURES.map((f, i) => <Reveal key={f.title} delay={i * 0.06}><motion.div whileHover={{ y: -9 }} className="bf-feature-card"><span className="bf-feature-icon"><f.icon size={25} /></span><small>{f.code}</small><h3>{f.title}</h3><p>{f.text}</p><ArrowUpRight className="bf-feature-arrow" size={20} /></motion.div></Reveal>)}</div></section>
+              <section className="bf-container bf-section bf-process"><Reveal><span className="bf-eyebrow">THE EXPERIENCE / 02</span><h2>From appointment<br />to <span className="bf-gradient-text">all clear.</span></h2><p>Every team member knows the next step. Every customer stays in the loop.</p><button onClick={() => navigate("shops")} className="bf-btn bf-primary">Start a booking <ArrowRight size={17} /></button></Reveal><div className="bf-process-list">{[["01", "Discover & book", "Choose the garage, service and time that work for you."], ["02", "Inspect & approve", "Review the itemized estimate before any work begins."], ["03", "Repair & verify", "Track repairs, parts allocation and independent QC."], ["04", "Collect with confidence", "A transparent record from arrival to pickup."]].map(([n, t, d], i) => <Reveal key={n} delay={i * 0.08} className="bf-process-row"><b>{n}</b><div><h3>{t}</h3><p>{d}</p></div><CheckCircle2 size={22} /></Reveal>)}</div></section>
+              <Reveal className="bf-container bf-cta"><span className="bf-eyebrow">BUILT TO MOVE YOU FORWARD</span><h2>Your workshop deserves<br />a better <em>way to work.</em></h2><p>Smarter bookings, simpler operations and better service outcomes — all in one place.</p><motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }} className="bf-btn bf-cta-btn" onClick={() => navigate("shops")}>Explore garages <ArrowUpRight size={18} /></motion.button></Reveal>
+            </>}
+
+            {view === "features" && <section className="bf-container bf-section bf-page"><Reveal><span className="bf-eyebrow">THE BAYFLOW PLATFORM</span><h1 className="bf-page-title">Designed to move<br /><span className="bf-gradient-text">every team forward.</span></h1><p className="bf-lead">Six connected capabilities. One seamless automotive service experience.</p></Reveal><div className="bf-feature-grid">{FEATURES.map((f, i) => <Reveal key={f.title} delay={i * 0.07}><motion.div whileHover={{ y: -8 }} className="bf-feature-card"><span className="bf-feature-icon"><f.icon size={26} /></span><small>{f.code}</small><h3>{f.title}</h3><p>{f.text}</p></motion.div></Reveal>)}</div><Reveal className="bf-callout"><p>Ready to bring clarity to your next service appointment?</p><button className="bf-btn bf-primary" onClick={() => navigate("shops")}>Find a garage <ArrowRight size={17} /></button></Reveal></section>}
+
+            {view === "shops" && <section className="bf-container bf-section bf-page"><Reveal><span className="bf-eyebrow">01 / DISCOVER</span><h1 className="bf-page-title">Find your <span className="bf-gradient-text">perfect garage.</span></h1><p className="bf-lead">Explore service centers, compare expertise and reserve an available slot.</p></Reveal><div className="bf-search"><Search size={19} /><input aria-label="Search garages" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by garage, location or service..." /><span>{visibleShops.length} GARAGES</span></div><div className="bf-shop-grid">{visibleShops.map((s, i) => <Reveal key={s.id} delay={i * 0.08}><motion.article whileHover={{ y: -7 }} className="bf-shop-card"><div className={`bf-shop-cover bf-shop-cover-${i % 3}`}><span>{s.initials || s.name.slice(0, 2)}</span><b><span className="bf-live-dot" /> ACCEPTING BOOKINGS</b></div><div className="bf-shop-content"><span className="bf-eyebrow">PREMIUM AUTOMOTIVE SERVICE</span><h3>{s.name}</h3><p>{s.description}</p><div className="bf-shop-tags">{(s.services || []).slice(0, 3).map((srv: any) => <span key={srv.id}>{srv.name}</span>)}</div><div className="bf-shop-meta"><span><MapPin size={16} /> {s.address}</span><span><Clock3 size={16} /> {s.hours}</span></div><button className="bf-btn bf-primary bf-full" onClick={() => chooseShop(s)}>Book appointment <ArrowUpRight size={18} /></button></div></motion.article></Reveal>)}</div>{!visibleShops.length && <div className="bf-empty"><Search size={30} /><h3>No garages found</h3><p>Try another search, or verify that the backend `/api/shops` is available.</p></div>}</section>}
+
+            {view === "reserve" && selectedShop && <section className="bf-container bf-section bf-page bf-narrow"><span className="bf-eyebrow">02 / YOUR APPOINTMENT</span><h1 className="bf-page-title">Make it <span className="bf-gradient-text">official.</span></h1><p className="bf-lead">{selectedShop.name} · {selectedShop.address}</p><div className="bf-wizard-progress">{["Services", "Time slot", "Vehicle", "Review"].map((title, i) => <div className={i + 1 <= step ? "bf-step-active" : ""} key={title}><span>{i + 1}</span><b>{title}</b></div>)}</div><div className="bf-panel bf-wizard"><AnimatePresence mode="wait"><motion.div key={step} initial={{ opacity: 0, x: 28 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -28 }} transition={{ duration: 0.25 }}>
+              {step === 1 && <><h2>What can we help with?</h2><p className="bf-muted">Choose one or more services.</p><div className="bf-options">{(selectedShop.services || []).map((s: any) => <motion.button whileTap={{ scale: 0.98 }} className={`bf-option ${services.includes(s.id) ? "bf-option-active" : ""}`} key={s.id} onClick={() => setServices((p) => p.includes(s.id) ? p.filter((id) => id !== s.id) : [...p, s.id])}><span><Wrench size={19} /> {s.name}</span><span>{money(s.price)} <CheckCircle2 size={18} /></span></motion.button>)}</div></>}
+              {step === 2 && <><h2>Choose your appointment</h2><p className="bf-muted">Select an available service time.</p><div className="bf-slot-grid">{(selectedShop.slots || []).slice(0, 48).map((s: any) => <button className={`bf-slot ${slot === s.id ? "bf-option-active" : ""}`} key={s.id} onClick={() => setSlot(s.id)}><CalendarDays size={19} /><strong>{s.date}</strong><span>{s.time}</span><small>{s.remaining} available</small></button>)}</div>{!(selectedShop.slots || []).length && <p className="bf-note">No available slots. Check back later.</p>}</>}
+              {step === 3 && <><h2>Your vehicle details</h2><div className="bf-form-grid">{(["plate", "make", "model", "year", "color", "mileage"] as const).map((k) => <label key={k}>{pretty(k)}<input value={vehicle[k]} onChange={(e) => setVehicle((v) => ({ ...v, [k]: e.target.value }))} placeholder={{ plate: "LEA-1234", make: "Honda", model: "Civic", year: "2022", color: "Silver", mileage: "35000" }[k]} /></label>)}<label className="bf-wide">Describe the issue (optional)<textarea rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Tell us what you've noticed..." /></label></div></>}
+              {step === 4 && <><h2>Review your appointment</h2><div className="bf-review">{[["Garage", selectedShop.name], ["Services", selectedShop.services.filter((s: any) => services.includes(s.id)).map((s: any) => s.name).join(", ")], ["Time", (selectedShop.slots.find((s: any) => s.id === slot)?.date || "") + " · " + (selectedShop.slots.find((s: any) => s.id === slot)?.time || "")], ["Vehicle", `${vehicle.year} ${vehicle.make} ${vehicle.model} · ${vehicle.plate}`]].map(([k, v]) => <div key={k}><span>{k}</span><strong>{v}</strong></div>)}</div><div className="bf-note">Your request is reviewed by the service team before confirmation.</div></>}
+              </motion.div></AnimatePresence><div className="bf-wizard-actions">{step > 1 && <button className="bf-btn bf-outline" onClick={() => setStep(step - 1)}><ChevronLeft size={16} /> Back</button>}<button className="bf-btn bf-primary" disabled={busy || (step === 1 && !services.length) || (step === 2 && !slot) || (step === 3 && (!vehicle.plate || !vehicle.make || !vehicle.model || !vehicle.year))} onClick={() => step < 4 ? setStep(step + 1) : submitBooking()}>{step === 4 ? account ? "Confirm booking" : "Sign in to continue" : "Continue"}<ChevronRight size={17} /></button></div></div></section>}
+
+            {view === "auth" && <section className="bf-container bf-auth-page"><Reveal className="bf-auth-card"><div className="bf-auth-card-heading"><span className="bf-eyebrow">WELCOME TO BAYFLOW</span><h1>{authMode === "login" ? "Welcome back." : "Create your account."}</h1><p>{authMode === "login" ? "Your garage experience is just one sign-in away." : "Join a smarter way to book and track service."}</p></div><form onSubmit={(e) => { e.preventDefault(); submitAuth(); }}>{authMode === "register" && <label>Full name<input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Your full name" /></label>}<label>Email address<input required type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label><label>Password<div className="bf-password-field"><input required minLength={authMode === "register" ? 8 : undefined} type={showPassword ? "text" : "password"} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" /><button type="button" onClick={() => setShowPassword(!showPassword)} aria-label="Show or hide password">{showPassword ? <EyeOff size={19} /> : <Eye size={19} />}</button></div></label><button className="bf-btn bf-primary bf-full" disabled={busy} type="submit">{busy ? "Please wait..." : authMode === "login" ? "Sign in to BayFlow" : "Create account"}<ArrowRight size={18} /></button></form><p className="bf-auth-switch">{authMode === "login" ? "New to BayFlow?" : "Already have an account?"}<button onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}>{authMode === "login" ? "Create an account" : "Sign in"}</button></p>
+              {SHOW_DEMO && <div className="bf-demo"><div className="bf-demo-head"><span className="bf-demo-head-icon"><Sparkles size={18} /></span><div><strong>Explore demo workspaces</strong><small>Choose a role to fill its demo credentials.</small></div><span className="bf-demo-badge">LOCAL DEMO</span></div><div className="bf-demo-grid">{DEMO_ROLES.map((r) => <button type="button" className={`bf-demo-role ${demoRole === r.role ? "bf-demo-selected" : ""}`} key={r.role} onClick={() => selectDemo(r)}><span>{r.role}</span>{demoRole === r.role && <Check size={16} />}</button>)}</div><div className="bf-demo-note"><LockKeyhole size={15} /><span>Demo accounts must be seeded locally. Never use this password for a production account.</span></div></div>}
+              </Reveal><Reveal delay={0.15} className="bf-auth-visual"><div className="bf-auth-visual-inner"><span className="bf-eyebrow">BEAUTIFULLY CONNECTED</span><motion.div className="bf-auth-car" animate={{ y: [0, -12, 0] }} transition={{ repeat: Infinity, duration: 6 }}><CarFront size={105} strokeWidth={1.1} /></motion.div><h2>Every booking.<br />Every approval.<br /><span className="bf-gradient-text">Every repair.</span></h2><p>A smarter automotive experience built for the people who keep things moving.</p><div className="bf-auth-benefits"><span><CheckCircle2 size={16} /> Transparent status tracking</span><span><CheckCircle2 size={16} /> Role-based workflows</span><span><CheckCircle2 size={16} /> Independent quality checks</span></div></div></Reveal></section>}
+
+            {view === "dashboard" && account && <section className="bf-container bf-section bf-page"><div className="bf-dash-top"><div><span className="bf-eyebrow">YOUR WORKSPACE</span><h1 className="bf-page-title">Good day, <span className="bf-gradient-text">{account.name.split(" ")[0]}.</span></h1><p className="bf-lead">Everything important, clearly in view.</p></div>{memberships.length > 0 && <select aria-label="Choose garage" className="bf-shop-select" value={shopId} onChange={(e) => setShopId(e.target.value)}>{shops.filter((s) => memberships.some((m) => m.shopId === s.id)).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>}</div>{memberships.length > 0 && <div className="bf-role-tag"><Settings2 size={17} /> {pretty(role)} workspace · {activeShop?.name}</div>}<div className="bf-dash-cards">{[[ClipboardCheck, "Accessible bookings", bookings.length], [Activity, "Active jobs", activeCount], [BadgeCheck, "Completed", finishedCount], [TrendingUp, "Revenue", money(analytics?.revenue || 0)]].map(([Icon, label, value]: any, i) => <Reveal key={label} delay={i * 0.06}><div className="bf-dash-card"><span><Icon size={20} /> {label}</span><strong>{value}</strong><small>Based on your accessible records</small></div></Reveal>)}</div><div className="bf-panel bf-jobs"><div className="bf-panel-head"><div><span className="bf-eyebrow">SERVICE OPERATIONS</span><h2>{memberships.length ? "Workshop bookings" : "My appointments"}</h2></div><button className="bf-btn bf-outline" onClick={() => navigate("shops")}>New booking <Plus size={17} /></button></div><div className="bf-table"><div className="bf-table-header"><span>REFERENCE / VEHICLE</span><span>GARAGE</span><span>STATUS</span><span>VIEW</span></div>{bookings.map((b: any) => <motion.button whileHover={{ x: 4 }} className="bf-table-row" key={b.id} onClick={() => loadBooking(b.id)}><span><strong>{b.reference}</strong><small>{b.vehicle.make} {b.vehicle.model} · {b.vehicle.plate}</small></span><span>{b.shop?.name || "Workshop"}</span><span><b className="bf-status">{pretty(b.status)}</b></span><ArrowUpRight size={19} /></motion.button>)}</div>{!bookings.length && <div className="bf-empty"><CarFront size={34} /><h3>Nothing in your queue yet.</h3><p>Your upcoming bookings will appear here.</p></div>}</div>
+              {role === "owner" && <div className="bf-panel bf-admin"><div className="bf-panel-head"><div><span className="bf-eyebrow">SHOP MANAGEMENT</span><h2>Grow your operation</h2></div></div><div className="bf-two-cols"><div><h3>Add a garage</h3><div className="bf-form-grid"><label>Garage name<input value={form.newShopName || ""} onChange={(e) => setForm({ ...form, newShopName: e.target.value })} /></label><label>Address<input value={form.newShopAddress || ""} onChange={(e) => setForm({ ...form, newShopAddress: e.target.value })} /></label></div><button className="bf-btn bf-primary" disabled={busy} onClick={() => run(async () => { await api("/shops", "POST", { name: form.newShopName, address: form.newShopAddress }); await loadShops(); await loadUser(); setSuccess("Garage created."); })}>Create garage <Plus size={17} /></button></div><div><h3>Add a team member</h3><div className="bf-form-grid"><label>Name<input value={form.staffName || ""} onChange={(e) => setForm({ ...form, staffName: e.target.value })} /></label><label>Email<input type="email" value={form.staffEmail || ""} onChange={(e) => setForm({ ...form, staffEmail: e.target.value })} /></label><label>Password<input type="password" value={form.staffPass || ""} onChange={(e) => setForm({ ...form, staffPass: e.target.value })} /></label><label>Role<select value={form.staffRole || "advisor"} onChange={(e) => setForm({ ...form, staffRole: e.target.value })}>{["advisor", "technician", "qc", "parts"].map((r) => <option key={r} value={r}>{pretty(r)}</option>)}</select></label></div><button className="bf-btn bf-primary" disabled={busy || !shopId} onClick={() => run(async () => { await api(`/staff/${shopId}`, "POST", { name: form.staffName, email: form.staffEmail, password: form.staffPass, role: form.staffRole || "advisor" }); setForm({}); setSuccess("Team member created."); })}>Add team member <Plus size={17} /></button></div></div></div>}
+              {(role === "owner" || role === "parts") && <Inventory shopId={shopId} />}
+            </section>}
+
+            {view === "booking" && currentBooking && <section className="bf-container bf-section bf-page"><button className="bf-back" onClick={() => navigate("dashboard")}><ChevronLeft size={17} /> Back to dashboard</button><div className="bf-booking-head"><div><span className="bf-eyebrow">SERVICE JOB / {currentBooking.reference}</span><h1 className="bf-page-title">{currentBooking.vehicle.make} <span className="bf-gradient-text">{currentBooking.vehicle.model}</span></h1><p className="bf-lead">{currentBooking.vehicle.plate} · {currentBooking.vehicle.year} · {currentBooking.shop?.name}</p></div><b className="bf-status">{pretty(currentBooking.status)}</b></div><div className="bf-detail-grid"><div><div className="bf-panel"><div className="bf-panel-head"><h2>Service journey</h2><ClipboardCheck size={22} /></div><div className="bf-stage-grid">{STAGES.map((s, i) => <div key={s} className={STAGES.indexOf(currentBooking.status) >= i ? "bf-stage-done" : ""}><span>{i + 1}</span>{pretty(s)}</div>)}</div>{currentBooking.status === "ESTIMATE_REJECTED" && <div className="bf-note">Estimate rejected — a revised estimate can be submitted.</div>}</div><div className="bf-panel"><h2>Itemized estimate</h2>{currentBooking.estimate?.length ? <><div className="bf-estimate-list">{currentBooking.estimate.map((x: any) => <div key={x.id}><span><strong>{x.name}</strong><small>{pretty(x.type)} · Qty {x.qty}</small></span><b>{money(x.qty * x.price)}</b></div>)}</div><div className="bf-estimate-total"><span>Total estimate</span><strong>{money(currentBooking.estimate.reduce((t: number, i: any) => t + i.qty * i.price, 0))}</strong></div></> : <p className="bf-muted">An itemized estimate will appear after inspection.</p>}</div><div className="bf-panel"><h2>Activity history</h2><div className="bf-activity-list">{currentBooking.audit?.slice().reverse().map((a: any) => <div key={a.id}><span className="bf-activity-dot"/><div><strong>{pretty(a.action)}</strong><small>{a.detail || "Status updated"} · {new Date(a.at).toLocaleString()}</small></div></div>)}</div></div></div><div><div className="bf-panel"><span className="bf-eyebrow">NEXT STEP</span><h2>Move the job forward</h2><p className="bf-muted">Available actions depend on your role and the current stage.</p><ActionControls b={currentBooking} current={account} membership={memberships.find((m) => m.shopId === currentBooking.shopId)} form={form} setForm={setForm} btn={btn} busy={busy} /></div><div className="bf-panel"><h2>Vehicle details</h2><div className="bf-vehicle-list">{Object.entries(currentBooking.vehicle).map(([k, v]) => <div key={k}><span>{pretty(k)}</span><strong>{String(v || "—")}</strong></div>)}</div></div>{currentBooking.qcIssues?.length > 0 && <div className="bf-panel"><h2>QC issues</h2>{currentBooking.qcIssues.map((x: any, i: number) => <p className="bf-note" key={i}>{x.issue}</p>)}</div>}</div></div></section>}
+
+          </motion.div>
+        </AnimatePresence>
+
+        <footer className="bf-footer"><div className="bf-container bf-footer-grid"><div><div className="bf-logo bf-foot-logo"><span className="bf-logo-icon"><Layers3 size={23} /></span><span>bay<span className="bf-logo-accent">flow</span><small>THE AUTO SERVICE PLATFORM</small></span></div><p>Smarter automotive service.<br />Beautifully connected, every step of the way.</p></div><div><h4>PLATFORM</h4><button onClick={() => navigate("home")}>Home</button><button onClick={() => navigate("shops")}>Find a garage</button><button onClick={() => navigate("features")}>Features</button></div><div><h4>GET STARTED</h4><button onClick={() => navigate("auth")}>My account</button><button onClick={() => navigate("shops")}>Book a service</button>{account && <button onClick={() => navigate("dashboard")}>Dashboard</button>}</div><div><h4>DEVELOPED BY</h4><strong>Sultan Zaib</strong><p>Python Engineer | Backend Engineer</p><a href="https://github.com/szofficiall" target="_blank" rel="noopener noreferrer">GitHub profile <ArrowUpRight size={14} /></a></div></div><div className="bf-container bf-footer-bottom"><span>© 2026 BayFlow. All rights reserved.</span><span>Designed & developed by <a href="https://github.com/szofficiall" target="_blank" rel="noopener noreferrer">Sultan Zaib</a></span></div></footer>
       </div>
-      <header className="header wrap">
-        <button className="brand" onClick={() => go("home")}>
-          <span className="brand-icon">
-            <Layers3 size={24} />
-          </span>
-          <span>
-            bay<span className="accent">flow</span>
-            <small>THE AUTO SERVICE PLATFORM</small>
-          </span>
-        </button>
-        <nav className={menu ? "nav opened" : "nav"}>
-          <button onClick={() => go("home")}>Home</button>
-          <button onClick={() => go("shops")}>Find a garage</button>
-          <button onClick={() => go("features")}>Platform</button>
-          {account && (
-            <button onClick={() => go("dashboard")}>Dashboard</button>
-          )}
-        </nav>
-        <div className="nav-actions">
-          <button
-            aria-label="Toggle color theme"
-            className="theme-toggle"
-            onClick={() => setDark(!dark)}
-          >
-            {dark ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-          {account ? (
-            <button className="btn outline compact" onClick={logout}>
-              Sign out
-            </button>
-          ) : (
-            <button className="btn outline compact" onClick={() => go("auth")}>
-              Sign in <ArrowUpRight size={15} />
-            </button>
-          )}
-          <button className="mobile-menu" onClick={() => setMenu(!menu)}>
-            {menu ? <X /> : <Menu />}
-          </button>
-        </div>
-      </header>
-      {error && (
-        <div className="toast error" role="alert">
-          {error}
-          <button onClick={() => setError("")}>
-            <X size={14} />
-          </button>
-        </div>
-      )}
-      {success && (
-        <div className="toast success" role="status">
-          {success}
-          <button onClick={() => setSuccess("")}>
-            <X size={14} />
-          </button>
-        </div>
-      )}
-      {view === "home" && (
-        <>
-          <section className="hero wrap">
-            <div className="hero-copy">
-              <div className="eyebrow">
-                <span className="pulse" /> THE OPERATING SYSTEM FOR MODERN GARAGES{" "}
-                <ArrowUpRight size={15} />
-              </div>
-              <h1>
-                Every repair,
-                <br />
-                <span className="gradient-text">reimagined.</span>
-              </h1>
-              <p>
-                A premium digital experience that connects drivers, workshops and service teams — from first booking to the final quality check. Beautifully simple, built for real operations.
-              </p>
-              <div className="hero-buttons">
-                <button
-                  className="btn primary large"
-                  onClick={() => go("shops")}
-                >
-                  Book your service <ArrowUpRight size={18} />
-                </button>
-                <button
-                  className="btn ghost large"
-                  onClick={() => go("features")}
-                >
-                  Explore the platform <ArrowRight size={18} />
-                </button>
-              </div>
-              <div className="trust">
-                <div className="avatars">
-                  <span>AJ</span>
-                  <span>MK</span>
-                  <span>SA</span>
-                </div>
-                <div>
-                  <b>Built for workshops that care</b>
-                  <small>A seamless experience at every step</small>
-                </div>
-              </div>
-            </div>
-            <div className="hero-visual">
-              <div className="hero-halo" aria-hidden="true" />
-              <div className="hero-grid" aria-hidden="true" />
-              <div className="orbit orbit1" />
-              <div className="orbit orbit2" />
-              <div className="dashboard-mock">
-                <div className="mock-top">
-                  <span className="dots">● ● ●</span>
-                  <span>WORKSHOP OVERVIEW</span>
-                  <span className="live-dot">● Live</span>
-                </div>
-                <div className="mock-content">
-                  <div className="mock-label">
-                    WORKSHOP INTELLIGENCE <SlidersHorizontal size={15} />
-                  </div>
-                  <h3>
-                    Your workflow.
-                    <br />
-                    Beautifully in sync.
-                  </h3>
-                  <div className="mock-kpis">
-                    <div>
-                      <small>Active jobs</small>
-                      <strong>
-                        24 <span>↗</span>
-                      </strong>
-                    </div>
-                    <div>
-                      <small>Completed</small>
-                      <strong>
-                        86 <span>↗</span>
-                      </strong>
-                    </div>
-                  </div>
-                  <div className="mock-chart">
-                    <i style={{ height: "32%" }} />
-                    <i style={{ height: "54%" }} />
-                    <i style={{ height: "42%" }} />
-                    <i style={{ height: "70%" }} />
-                    <i style={{ height: "55%" }} />
-                    <i style={{ height: "86%" }} />
-                    <i style={{ height: "74%" }} />
-                    <i style={{ height: "100%" }} />
-                    <i style={{ height: "80%" }} />
-                  </div>
-                  <div className="mock-row">
-                    <span>
-                      <CheckCircle2 size={15} /> Quality check passed
-                    </span>
-                    <b>JUST NOW</b>
-                  </div>
-                </div>
-              </div>
-              <div className="float-card top-float">
-                <span className="mini-icon">
-                  <Wrench size={18} />
-                </span>
-                <div>
-                  <b>Repair in progress</b>
-                  <small>Honda Civic · Job #2048</small>
-                </div>
-                <span className="tag">ACTIVE</span>
-              </div>
-              <div className="float-card bottom-float">
-                <span className="mini-icon mint">
-                  <ShieldCheck size={18} />
-                </span>
-                <div>
-                  <b>Quality approved</b>
-                  <small>Ready for collection</small>
-                </div>
-                <CheckCircle2 size={18} color="#47d6a0" />
-              </div>
-            </div>
-          </section>
-          <section className="partner-ribbon wrap" aria-label="Platform advantages">
-            <span>TRUSTED WORKFLOW</span><b>01 / Book with confidence</b><i />
-            <b>02 / Live status tracking</b><i />
-            <b>03 / Quality-assured delivery</b>
-          </section>
-          <section className="metrics wrap">
-            <div>
-              <b>01</b>
-              <span>Unified garage experience</span>
-            </div>
-            <div>
-              <b>06</b>
-              <span>Purpose-built team roles</span>
-            </div>
-            <div>
-              <b>100%</b>
-              <span>Transparent job journey</span>
-            </div>
-            <div>
-              <b>24/7</b>
-              <span>Online appointment access</span>
-            </div>
-          </section>
-          <section className="section wrap">
-            <div className="section-head">
-              <div>
-                <div className="eyebrow">WHY BAYFLOW / 01</div>
-                <h2>
-                  Everything connected.
-                  <br />
-                  <span className="muted">Nothing left behind.</span>
-                </h2>
-              </div>
-              <p>
-                Replace scattered spreadsheets, endless follow-ups and missed handoffs with one beautiful, unified platform.
-              </p>
-            </div>
-            <div className="feature-grid">
-              {features.map((f, i) => (
-                <div className="feature" key={f.title}>
-                  <div className="feature-icon">{f.icon}</div>
-                  <span className="feature-num">0{i + 1}</span>
-                  <h3>{f.title}</h3>
-                  <p>{f.desc}</p>
-                  <ArrowUpRight className="feature-arrow" size={19} />
-                </div>
-              ))}
-            </div>
-          </section>
-          <section className="showcase wrap">
-            <div className="eyebrow">EFFORTLESS FROM START TO FINISH / 02</div>
-            <div className="showcase-grid">
-              <div>
-                <h2>
-                  Service, without
-                  <br />
-                  <span className="gradient-text">the guesswork.</span>
-                </h2>
-                <p>
-                  Built around the actual way automotive businesses operate,
-                  from customer appointments to workshop accountability.
-                </p>
-                <button className="btn primary" onClick={() => go("shops")}>
-                  Book a service <ArrowRight size={17} />
-                </button>
-              </div>
-              <div className="timeline">
-                {[
-                  [
-                    "01",
-                    "Discover & book",
-                    "Choose a trusted garage and reserve your appointment.",
-                  ],
-                  [
-                    "02",
-                    "Inspect & approve",
-                    "Receive an itemized quote and approve it online.",
-                  ],
-                  [
-                    "03",
-                    "Repair & verify",
-                    "Your vehicle moves through service and quality control.",
-                  ],
-                  [
-                    "04",
-                    "Drive with confidence",
-                    "Track completion and collect your car with peace of mind.",
-                  ],
-                ].map(([n, title, desc]) => (
-                  <div className="timeline-item" key={n}>
-                    <b>{n}</b>
-                    <div>
-                      <h3>{title}</h3>
-                      <p>{desc}</p>
-                    </div>
-                    <CheckCircle2 size={20} />
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-          <section className="cta wrap">
-            <div className="eyebrow">BUILT TO MOVE YOU FORWARD</div>
-            <h2>
-              Ready for a better
-              <br />
-              way to <em>work?</em>
-            </h2>
-            <p>
-              Start with a booking. Discover a more connected automotive service
-              experience.
-            </p>
-            <button className="btn light large" onClick={() => go("shops")}>
-              Find your garage <ArrowUpRight size={18} />
-            </button>
-          </section>
-        </>
-      )}
-      {view === "features" && (
-        <section className="section wrap page-top">
-          <div className="eyebrow">A CONNECTED WORKSPACE</div>
-          <h1 className="page-heading">
-            Powerful behind the scenes.
-            <br />
-            <span className="gradient-text">Simple on the surface.</span>
-          </h1>
-          <p className="intro">
-            From booking to pickup, every step stays transparent, secure and
-            organized.
-          </p>
-          <div className="feature-grid">
-            {features.map((f, i) => (
-              <div className="feature" key={i}>
-                <div className="feature-icon">{f.icon}</div>
-                <span className="feature-num">0{i + 1}</span>
-                <h3>{f.title}</h3>
-                <p>{f.desc}</p>
-              </div>
-            ))}
-          </div>
-          <div className="callout">
-            Your team has one workspace. Your customers have peace of mind.{" "}
-            <button className="btn primary" onClick={() => go("shops")}>
-              Get started <ArrowRight size={16} />
-            </button>
-          </div>
-        </section>
-      )}
-      {view === "shops" && (
-        <section className="section wrap page-top">
-          <div className="eyebrow">01 / DISCOVER</div>
-          <h1 className="page-heading">
-            Find your <span className="gradient-text">perfect garage.</span>
-          </h1>
-          <p className="intro">
-            Explore trusted auto service centers, browse their expertise and
-            book online.
-          </p>
-          <div className="shop-grid">
-            {shops.map((s, i) => (
-              <article className="shop-card" key={s.id}>
-                <div className={"shop-cover cover-" + (i % 3)}>
-                  <div className="cover-lines" />
-                  <span className="shop-monogram">{s.initials}</span>
-                  <span className="cover-pill">
-                    <span className="pulse" /> ACCEPTING BOOKINGS
-                  </span>
-                </div>
-                <div className="shop-details">
-                  <span className="small-label">
-                    PREMIUM AUTOMOTIVE SERVICE
-                  </span>
-                  <h3>{s.name}</h3>
-                  <p>{s.description}</p>
-                  <div className="shop-meta">
-                    <span>
-                      <MapPin size={15} />
-                      {s.address}
-                    </span>
-                    <span>
-                      <Clock3 size={15} />
-                      {s.hours}
-                    </span>
-                  </div>
-                  <button
-                    className="btn primary"
-                    onClick={() => {
-                      setSelected(s);
-                      setServices([]);
-                      setSlot("");
-                      setStep(1);
-                      go("reserve");
-                    }}
-                  >
-                    Book appointment <ArrowUpRight size={16} />
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-      {view === "reserve" && selected && (
-        <section className="section wrap page-top">
-          <div className="eyebrow">02 / YOUR BOOKING</div>
-          <h1 className="page-heading">
-            Make an <span className="gradient-text">appointment.</span>
-          </h1>
-          <p className="intro">
-            {selected.name} · {selected.address}
-          </p>
-          <div className="wizard-steps">
-            {["Services", "Time slot", "Your vehicle", "Review"].map((s, i) => (
-              <div className={i + 1 <= step ? "selected" : ""} key={s}>
-                <span>{i + 1}</span>
-                {s}
-              </div>
-            ))}
-          </div>
-          <div className="wizard panel">
-            {step === 1 && (
-              <>
-                <h2>What can we help with?</h2>
-                <p className="muted">Select one or more services.</p>
-                <div className="service-grid">
-                  {selected.services.map((s: any) => (
-                    <button
-                      key={s.id}
-                      className={
-                        "service-option " +
-                        (services.includes(s.id) ? "chosen" : "")
-                      }
-                      onClick={() =>
-                        setServices((p) =>
-                          p.includes(s.id)
-                            ? p.filter((x) => x !== s.id)
-                            : [...p, s.id],
-                        )
-                      }
-                    >
-                      <span>
-                        <Wrench size={19} />
-                        {s.name}
-                      </span>
-                      <span>
-                        From PKR {s.price.toLocaleString()}{" "}
-                        <CheckCircle2 size={17} />
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            {step === 2 && (
-              <>
-                <h2>Choose an available slot</h2>
-                <p className="muted">
-                  Available times are shown in local garage time.
-                </p>
-                <div className="slot-grid">
-                  {selected.slots.slice(0, 48).map((s: any) => (
-                    <button
-                      className={
-                        "slot-option " + (slot === s.id ? "chosen" : "")
-                      }
-                      key={s.id}
-                      onClick={() => setSlot(s.id)}
-                    >
-                      <b>{s.date}</b>
-                      <span>{s.time}</span>
-                      <small>
-                        {s.remaining} spot{s.remaining === 1 ? "" : "s"} left
-                      </small>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            {step === 3 && (
-              <>
-                <h2>Tell us about your vehicle</h2>
-                <div className="form-grid">
-                  {(
-                    [
-                      "plate",
-                      "make",
-                      "model",
-                      "year",
-                      "color",
-                      "mileage",
-                    ] as const
-                  ).map((k) => (
-                    <label key={k}>
-                      {pretty(k)}
-                      <input
-                        value={vehicle[k]}
-                        onChange={(e) =>
-                          setVehicle((v) => ({ ...v, [k]: e.target.value }))
-                        }
-                        placeholder={
-                          k === "plate"
-                            ? "LEA-1234"
-                            : k === "make"
-                              ? "Honda"
-                              : k === "model"
-                                ? "Civic"
-                                : k === "year"
-                                  ? "2022"
-                                  : ""
-                        }
-                      />
-                    </label>
-                  ))}
-                  <label className="wide">
-                    Describe the issue (optional)
-                    <textarea
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      rows={4}
-                      placeholder="Tell our technicians what you noticed..."
-                    />
-                  </label>
-                </div>
-              </>
-            )}
-            {step === 4 && (
-              <>
-                <h2>Review your appointment</h2>
-                <div className="review-grid">
-                  <div>
-                    <small>Garage</small>
-                    <b>{selected.name}</b>
-                  </div>
-                  <div>
-                    <small>Services</small>
-                    <b>
-                      {selected.services
-                        .filter((x: any) => services.includes(x.id))
-                        .map((x: any) => x.name)
-                        .join(", ")}
-                    </b>
-                  </div>
-                  <div>
-                    <small>Time slot</small>
-                    <b>
-                      {selected.slots.find((x: any) => x.id === slot)?.date} ·{" "}
-                      {selected.slots.find((x: any) => x.id === slot)?.time}
-                    </b>
-                  </div>
-                  <div>
-                    <small>Vehicle</small>
-                    <b>
-                      {vehicle.year} {vehicle.make} {vehicle.model} ·{" "}
-                      {vehicle.plate}
-                    </b>
-                  </div>
-                </div>
-                <p className="notice">
-                  Your booking starts as a request. Garage staff will confirm it
-                  and notify you through your dashboard.
-                </p>
-              </>
-            )}
-            <div className="wizard-actions">
-              {step > 1 && (
-                <button
-                  className="btn outline"
-                  onClick={() => setStep(step - 1)}
-                >
-                  Back
-                </button>
-              )}
-              <button
-                className="btn primary"
-                disabled={
-                  busy ||
-                  (step === 1 && !services.length) ||
-                  (step === 2 && !slot) ||
-                  (step === 3 &&
-                    (!vehicle.plate ||
-                      !vehicle.make ||
-                      !vehicle.model ||
-                      !vehicle.year))
-                }
-                onClick={() => (step < 4 ? setStep(step + 1) : submitBooking())}
-              >
-                {step === 4
-                  ? account
-                    ? "Confirm booking"
-                    : "Sign in & continue"
-                  : "Continue"}{" "}
-                <ArrowRight size={16} />
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
-      {view === "auth" && (
-        <section className="section wrap auth-section">
-          <div className="auth-card">
-            <div className="eyebrow">WELCOME TO BAYFLOW</div>
-            <h1>
-              {authMode === "login" ? "Welcome back." : "Join the movement."}
-            </h1>
-            <p>
-              {authMode === "login"
-                ? "Sign in to see your appointments and workspace."
-                : "Create your customer account to book your first service."}
-            </p>
-            {authMode === "register" && (
-              <label>
-                Full name
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Your full name"
-                />
-              </label>
-            )}
-            <label>
-              Email address
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Minimum 8 characters"
-              />
-            </label>
-            <button
-              disabled={busy}
-              className="btn primary full"
-              onClick={submitAuth}
-            >
-              {authMode === "login" ? "Sign in" : "Create account"}{" "}
-              <ArrowRight size={17} />
-            </button>
-            <p className="switch-auth">
-              {authMode === "login"
-                ? "Don't have an account? "
-                : "Already a member? "}
-              <button
-                onClick={() =>
-                  setAuthMode(authMode === "login" ? "register" : "login")
-                }
-              >
-                {authMode === "login" ? "Create one" : "Sign in"}
-              </button>
-            </p>
-            <div className="demo-hint">
-              <b>Explore the demo</b>
-              <small>
-                Use any seeded role account: owner, advisor, technician, qc,
-                parts or customer <b>@bayflow.demo</b>
-              </small>
-              <small>
-                Password: <b>Demo@12345</b>
-              </small>
-            </div>
-          </div>
-          <div className="auth-art">
-            <div className="massive-icon">
-              <CarFront size={114} />
-            </div>
-            <h2>
-              Connected from
-              <br />
-              start to finish.
-            </h2>
-            <p>Every booking. Every approval. Every repair.</p>
-          </div>
-        </section>
-      )}
-      {view === "dashboard" && account && (
-        <section className="section wrap page-top dashboard">
-          <div className="eyebrow">YOUR CONTROL CENTER</div>
-          <div className="dash-title">
-            <div>
-              <h1 className="page-heading">
-                Good day,{" "}
-                <span className="gradient-text">
-                  {account.name.split(" ")[0]}.
-                </span>
-              </h1>
-              <p className="intro">
-                Here's everything that matters, all in one place.
-              </p>
-            </div>
-            {memberships.length > 0 && (
-              <select
-                value={shopId}
-                onChange={(e) => setShopId(e.target.value)}
-              >
-                {shops
-                  .filter((s) => memberships.some((m) => m.shopId === s.id))
-                  .map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-              </select>
-            )}
-          </div>
-          {memberships.length > 0 ? (
-            <>
-              <div className="role-label">
-                <Settings2 size={16} /> {pretty(role)} workspace ·{" "}
-                {activeShop?.name}
-              </div>
-              <div className="dash-stats">
-                <div>
-                  <span>
-                    <ClipboardCheck size={18} /> Assigned bookings
-                  </span>
-                  <b>{bookings.length}</b>
-                  <small>Across your accessible jobs</small>
-                </div>
-                <div>
-                  <span>
-                    <Zap size={18} /> Active jobs
-                  </span>
-                  <b>
-                    {
-                      bookings.filter(
-                        (b) => !["COMPLETED", "CANCELLED"].includes(b.status),
-                      ).length
-                    }
-                  </b>
-                  <small>Currently in progress</small>
-                </div>
-                <div>
-                  <span>
-                    <ShieldCheck size={18} /> Completed
-                  </span>
-                  <b>
-                    {bookings.filter((b) => b.status === "COMPLETED").length}
-                  </b>
-                  <small>Delivered successfully</small>
-                </div>
-                <div>
-                  <span>
-                    <TrendingUp size={18} /> Revenue
-                  </span>
-                  <b>PKR {(analytics?.revenue || 0).toLocaleString()}</b>
-                  <small>Completed service estimates</small>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="notice">
-              Your customer portal shows your bookings across all garages.
-              Select a booking to track its full history.
-            </div>
-          )}
-          <div className="panel list-panel">
-            <div className="panel-heading">
-              <div>
-                <div className="eyebrow">WORKSHOP OVERVIEW</div>
-                <h2>
-                  {memberships.length ? "Workshop bookings" : "My appointments"}
-                </h2>
-              </div>
-              <button className="btn outline" onClick={() => go("shops")}>
-                New booking <Plus size={16} />
-              </button>
-            </div>
-            {bookings.length ? (
-              <div className="booking-table">
-                <div className="table-head">
-                  <span>REFERENCE / VEHICLE</span>
-                  <span>GARAGE</span>
-                  <span>STATUS</span>
-                  <span>VIEW</span>
-                </div>
-                {bookings.map((b) => (
-                  <button
-                    className="booking-row"
-                    key={b.id}
-                    onClick={() => loadBooking(b.id)}
-                  >
-                    <span>
-                      <b>{b.reference}</b>
-                      <small>
-                        {b.vehicle.make} {b.vehicle.model} · {b.vehicle.plate}
-                      </small>
-                    </span>
-                    <span>{b.shop?.name}</span>
-                    <span>
-                      <span className="status">{pretty(b.status)}</span>
-                    </span>
-                    <span>
-                      <ArrowUpRight size={19} />
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="empty">
-                <CarFront size={40} />
-                <h3>No bookings here yet</h3>
-                <p>
-                  New appointments will appear in your workspace automatically.
-                </p>
-              </div>
-            )}
-          </div>
-          {role === "owner" && (
-            <div className="panel admin-panel">
-              <h2>Expand your operations</h2>
-              <p className="muted">
-                Create another location or add shop staff with the right
-                permissions.
-              </p>
-              <div className="form-grid">
-                <label>
-                  New shop name
-                  <input
-                    value={form.newShopName || ""}
-                    onChange={(e) =>
-                      setForm({ ...form, newShopName: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  Address
-                  <input
-                    value={form.newShopAddress || ""}
-                    onChange={(e) =>
-                      setForm({ ...form, newShopAddress: e.target.value })
-                    }
-                  />
-                </label>
-                <button
-                  className="btn primary"
-                  onClick={() =>
-                    run(async () => {
-                      await api("/shops", "POST", {
-                        name: form.newShopName,
-                        address: form.newShopAddress,
-                      });
-                      await loadShops();
-                      await loadUser();
-                      setSuccess("Shop created");
-                    })
-                  }
-                >
-                  Create shop <Plus size={16} />
-                </button>
-              </div>
-              <div className="divider" />
-              <div className="form-grid">
-                <label>
-                  Staff name
-                  <input
-                    value={form.staffName || ""}
-                    onChange={(e) =>
-                      setForm({ ...form, staffName: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  Staff email
-                  <input
-                    value={form.staffEmail || ""}
-                    onChange={(e) =>
-                      setForm({ ...form, staffEmail: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  Password
-                  <input
-                    value={form.staffPass || ""}
-                    onChange={(e) =>
-                      setForm({ ...form, staffPass: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  Role
-                  <select
-                    value={form.staffRole || "advisor"}
-                    onChange={(e) =>
-                      setForm({ ...form, staffRole: e.target.value })
-                    }
-                  >
-                    {["advisor", "technician", "qc", "parts"].map((r) => (
-                      <option key={r} value={r}>
-                        {pretty(r)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  className="btn primary"
-                  onClick={() =>
-                    run(async () => {
-                      await api("/staff/" + shopId, "POST", {
-                        name: form.staffName,
-                        email: form.staffEmail,
-                        password: form.staffPass,
-                        role: form.staffRole || "advisor",
-                      });
-                      setSuccess("Team member created");
-                      setForm({});
-                    })
-                  }
-                >
-                  Add staff member <Plus size={16} />
-                </button>
-              </div>
-            </div>
-          )}
-          {(role === "owner" || role === "parts") && (
-            <Inventory shopId={shopId} api={api} />
-          )}
-        </section>
-      )}
-      {view === "booking" && activeBooking && (
-        <section className="section wrap page-top booking-detail">
-          <button className="back-link" onClick={() => go("dashboard")}>
-            ← Back to dashboard
-          </button>
-          <div className="detail-title">
-            <div>
-              <div className="eyebrow">
-                SERVICE JOB / {activeBooking.reference}
-              </div>
-              <h1 className="page-heading">
-                {activeBooking.vehicle.make}{" "}
-                <span className="gradient-text">
-                  {activeBooking.vehicle.model}
-                </span>
-              </h1>
-              <p>
-                {activeBooking.vehicle.plate} · {activeBooking.vehicle.year} ·{" "}
-                {activeBooking.shop?.name}
-              </p>
-            </div>
-            <span className="status big">{pretty(activeBooking.status)}</span>
-          </div>
-          <div className="detail-grid">
-            <div>
-              <div className="panel">
-                <div className="panel-heading">
-                  <h2>Service timeline</h2>
-                  <ClipboardCheck />
-                </div>
-                <div className="status-track">
-                  {steps
-                    .filter((s) => s !== "ESTIMATE_REJECTED")
-                    .map((s, i) => (
-                      <div
-                        className={
-                          "track-item " +
-                          (steps.indexOf(s) <=
-                          steps.indexOf(activeBooking.status)
-                            ? "passed"
-                            : "")
-                        }
-                        key={s}
-                      >
-                        <span>{i + 1}</span>
-                        <p>{pretty(s)}</p>
-                      </div>
-                    ))}
-                </div>
-              </div>
-              <div className="panel">
-                <h2>Itemized estimate</h2>
-                {activeBooking.estimate?.length ? (
-                  <>
-                    <div className="estimate-lines">
-                      {activeBooking.estimate.map((i: any) => (
-                        <div key={i.id}>
-                          <span>
-                            {i.name}
-                            <small>
-                              {i.type} · Qty {i.qty}
-                            </small>
-                          </span>
-                          <b>PKR {(i.qty * i.price).toLocaleString()}</b>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="estimate-total">
-                      <span>Total estimate</span>
-                      <b>
-                        PKR{" "}
-                        {activeBooking.estimate
-                          .reduce((a: number, i: any) => a + i.qty * i.price, 0)
-                          .toLocaleString()}
-                      </b>
-                    </div>
-                  </>
-                ) : (
-                  <p className="muted">
-                    Your technician will create the estimate after inspection.
-                  </p>
-                )}
-              </div>
-              <div className="panel">
-                <h2>Activity & accountability</h2>
-                <div className="activity">
-                  {activeBooking.audit
-                    ?.slice()
-                    .reverse()
-                    .map((a: any) => (
-                      <div key={a.id}>
-                        <span className="activity-dot" />
-                        <div>
-                          <b>{pretty(a.action)}</b>
-                          <small>
-                            {a.detail || "Job status updated"} ·{" "}
-                            {new Date(a.at).toLocaleString()}
-                          </small>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            </div>
-            <div>
-              <div className="panel action-panel">
-                <div className="eyebrow">NEXT STEP</div>
-                <h2>Move the job forward</h2>
-                <p className="muted">
-                  Actions are controlled by your role and the current job stage.
-                </p>
-                <ActionControls
-                  b={activeBooking}
-                  current={account}
-                  membership={memberships.find(
-                    (m) => m.shopId === activeBooking.shopId,
-                  )}
-                  form={form}
-                  setForm={setForm}
-                  bookingBtn={bookingBtn}
-                  busy={busy}
-                />
-              </div>
-              <div className="panel vehicle-panel">
-                <h3>Vehicle information</h3>
-                {Object.entries(activeBooking.vehicle).map(([k, v]) => (
-                  <div key={k}>
-                    <span>{pretty(k)}</span>
-                    <b>{String(v || "—")}</b>
-                  </div>
-                ))}
-              </div>
-              {activeBooking.qcIssues?.length > 0 && (
-                <div className="panel">
-                  <h3>QC issues & rework</h3>
-                  {activeBooking.qcIssues.map((x: any, i: number) => (
-                    <p key={i} className="notice">
-                      {x.issue}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-      )}
-      <footer className="footer">
-        <div className="wrap footer-inner">
-          <div>
-            <div className="brand footbrand">
-              <span className="brand-icon">
-                <Layers3 size={22} />
-              </span>
-              <span>
-                bay<span className="accent">flow</span>
-                <small>THE AUTO SERVICE PLATFORM</small>
-              </span>
-            </div>
-            <p>
-              Modern automotive service.
-              <br />
-              Beautifully connected.
-            </p>
-          </div>
-          <div>
-            <span>PLATFORM</span>
-            <button onClick={() => go("shops")}>Find a garage</button>
-            <button onClick={() => go("features")}>Features</button>
-            <button onClick={() => go("dashboard")}>Dashboard</button>
-          </div>
-          <div>
-            <span>GET STARTED</span>
-            <button onClick={() => go("auth")}>My account</button>
-            <button onClick={() => go("shops")}>Book a service</button>
-          </div>
-          <div>
-            <span>BUILT WITH PURPOSE</span>
-            <p>
-              Next.js + Node.js
-              <br />Designed for the modern workshop
-            </p>
-          </div>
-        </div>
-        <div className="wrap footer-bottom">
-          © 2026 BayFlow. Crafted for confidence.{" "}
-          <span>DESIGNED TO MOVE FORWARD ↗</span>
-        </div>
-      </footer>
-    </main>
+    </MotionConfig>
   );
 }
-function Inventory({ shopId, api }: { shopId: string; api: any }) {
+
+function Inventory({ shopId }: { shopId: string }) {
   const [data, setData] = useState<any>(null);
-  useEffect(() => {
-    if (shopId)
-      api("/inventory/" + shopId)
-        .then(setData)
-        .catch(() => {});
-  }, [shopId]);
-  return (
-    <div className="panel inventory-panel">
-      <h2>Parts inventory</h2>
-      <div className="inventory-grid">
-        {data?.inventory?.map((i: any) => (
-          <div key={i.id}>
-            <span className="mini-icon">
-              <PackageCheck size={20} />
-            </span>
-            <b>{i.name}</b>
-            <span>{i.qty} available</span>
-            <small>{i.sku}</small>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  useEffect(() => { if (shopId) api(`/inventory/${shopId}`).then(setData).catch(() => setData(null)); }, [shopId]);
+  return <div className="bf-panel bf-inventory"><span className="bf-eyebrow">PARTS & SUPPLIES</span><h2>Inventory overview</h2><div className="bf-inventory-grid">{data?.inventory?.map((x: any) => <div key={x.id}><span className="bf-feature-icon"><PackageCheck size={20} /></span><strong>{x.name}</strong><small>{x.qty} in stock</small><span>{x.sku}</span></div>)}{!data?.inventory?.length && <p className="bf-muted">No inventory records available.</p>}</div></div>;
 }
-function ActionControls({
-  b,
-  current,
-  membership,
-  form,
-  setForm,
-  bookingBtn,
-  busy,
-}: any) {
+
+function ActionControls({ b, current, membership, form, setForm, btn, busy }: any) {
   const role = membership?.role || "customer";
   const own = b.customerId === current?.id;
-  const validTech = b.techId === current?.id;
-  const validParts = b.partsId === current?.id;
-  const validQc = b.qcId === current?.id;
   const advisor = ["advisor", "owner"].includes(role);
-  const [lineItems, setLineItems] = useState<any[]>([
-    {
-      name: "Labor – inspection & repair",
-      type: "labor",
-      sku: "",
-      qty: 1,
-      price: 2500,
-    },
-  ]);
-  const items = () => (
-    <div className="estimate-editor">
-      {lineItems.map((item, i) => (
-        <div className="estimate-edit-row" key={i}>
-          <input
-            placeholder="Item or labor description"
-            value={item.name}
-            onChange={(e) =>
-              setLineItems((p) =>
-                p.map((v, j) => (i === j ? { ...v, name: e.target.value } : v)),
-              )
-            }
-          />
-          <select
-            value={item.type}
-            onChange={(e) =>
-              setLineItems((p) =>
-                p.map((v, j) => (i === j ? { ...v, type: e.target.value } : v)),
-              )
-            }
-          >
-            <option value="labor">Labor</option>
-            <option value="part">Part</option>
-          </select>
-          <input
-            placeholder="Inventory SKU"
-            value={item.sku}
-            onChange={(e) =>
-              setLineItems((p) =>
-                p.map((v, j) => (i === j ? { ...v, sku: e.target.value } : v)),
-              )
-            }
-          />
-          <input
-            type="number"
-            min="1"
-            placeholder="Qty"
-            value={item.qty}
-            onChange={(e) =>
-              setLineItems((p) =>
-                p.map((v, j) =>
-                  i === j ? { ...v, qty: Number(e.target.value) } : v,
-                ),
-              )
-            }
-          />
-          <input
-            type="number"
-            min="0"
-            placeholder="PKR / unit"
-            value={item.price}
-            onChange={(e) =>
-              setLineItems((p) =>
-                p.map((v, j) =>
-                  i === j ? { ...v, price: Number(e.target.value) } : v,
-                ),
-              )
-            }
-          />
-        </div>
-      ))}
-      <button
-        className="btn outline"
-        onClick={() =>
-          setLineItems((p) => [
-            ...p,
-            { name: "", type: "part", sku: "", qty: 1, price: 0 },
-          ])
-        }
-      >
-        Add line <Plus size={15} />
-      </button>
-      {bookingBtn("Submit itemized estimate", "estimate", { items: lineItems })}
-    </div>
-  );
-  if (b.status === "PENDING" && advisor)
-    return (
-      <div className="action-buttons">
-        {bookingBtn("Confirm appointment", "confirm")}
-        {bookingBtn("Decline booking", "cancel")}
-      </div>
-    );
-  if (b.status === "CONFIRMED" && advisor)
-    return (
-      <>
-        <label>
-          Assign workshop technician
-          <select
-            value={form.userId || ""}
-            onChange={(e) => setForm({ ...form, userId: e.target.value })}
-          >
-            <option value="">Choose technician</option>
-            {b.staff
-              .filter((x: any) => x.role === "technician")
-              .map((x: any) => (
-                <option key={x.userId} value={x.userId}>
-                  {x.user?.name}
-                </option>
-              ))}
-          </select>
-        </label>
-        {bookingBtn("Assign technician", "assign", { userId: form.userId })}
-      </>
-    );
-  if (b.status === "ASSIGNED" && role === "technician" && validTech)
-    return bookingBtn("Start inspection", "inspect");
-  if (
-    (b.status === "INSPECTING" && role === "technician" && validTech) ||
-    (b.status === "ESTIMATE_REJECTED" &&
-      (advisor || (role === "technician" && validTech)))
-  )
-    return items();
-  if (b.status === "ESTIMATE_REVIEW" && advisor)
-    return bookingBtn("Send estimate to customer", "send_estimate");
-  if (b.status === "AWAITING_CUSTOMER" && own)
-    return (
-      <div className="action-buttons">
-        {bookingBtn("Approve estimate", "approve")}
-        {bookingBtn("Reject estimate", "reject")}
-      </div>
-    );
-  if (b.status === "ESTIMATE_APPROVED" && advisor)
-    return (
-      <>
-        <label>
-          Assign parts coordinator
-          <select
-            value={form.userId || ""}
-            onChange={(e) => setForm({ ...form, userId: e.target.value })}
-          >
-            <option value="">Choose parts person</option>
-            {b.staff
-              .filter((x: any) => x.role === "parts")
-              .map((x: any) => (
-                <option key={x.userId} value={x.userId}>
-                  {x.user?.name}
-                </option>
-              ))}
-          </select>
-        </label>
-        {bookingBtn("Send to parts team", "assign_parts", {
-          userId: form.userId,
-        })}
-      </>
-    );
-  if (b.status === "PARTS_PENDING" && role === "parts" && validParts)
-    return bookingBtn("Check part availability", "check_parts");
-  if (b.status === "PARTS_ORDERED" && role === "parts" && validParts)
-    return (
-      <>
-        <p className="notice">
-          Parts missing: {b.missingParts?.map((p: any) => p.name).join(", ")}.
-          Open purchase orders will be received.
-        </p>
-        {bookingBtn("Receive ordered parts", "receive_parts")}
-      </>
-    );
-  if (b.status === "PARTS_READY" && role === "parts" && validParts)
-    return bookingBtn("Allocate parts & start repair", "allocate");
-  if (b.status === "IN_REPAIR" && role === "technician" && validTech)
-    return bookingBtn("Repair done — send to QC", "submit_qc");
-  if (b.status === "QC_PENDING" && role === "qc")
-    return bookingBtn("Claim QC inspection", "claim_qc");
-  if (b.status === "QC_IN_PROGRESS" && role === "qc" && validQc)
-    return (
-      <>
-        <label>
-          QC issue (if failed)
-          <textarea
-            value={form.issue || ""}
-            onChange={(e) => setForm({ ...form, issue: e.target.value })}
-            placeholder="What needs rework?"
-          />
-        </label>
-        <div className="action-buttons">
-          {bookingBtn("QC passed", "qc_pass")}
-          {bookingBtn("QC failed — return to repair", "qc_fail", {
-            issue: form.issue,
-          })}
-        </div>
-      </>
-    );
-  if (b.status === "READY_FOR_PICKUP" && (advisor || own))
-    return bookingBtn("Confirm pickup & complete", "complete");
-  return (
-    <div className="waiting">
-      <Clock3 size={22} />
-      <div>
-        <b>Waiting for the next team</b>
-        <p>
-          The responsible person can move this booking to the next stage. All
-          updates will appear here.
-        </p>
-      </div>
-    </div>
-  );
+  const tech = role === "technician" && b.techId === current?.id;
+  const parts = role === "parts" && b.partsId === current?.id;
+  const qc = role === "qc" && b.qcId === current?.id;
+  const [lineItems, setLineItems] = useState<any[]>([{ name: "Labor - inspection and repair", type: "labor", sku: "", qty: 1, price: 2500 }]);
+  const estimateEditor = <div className="bf-estimate-editor">{lineItems.map((x, i) => <div key={i} className="bf-estimate-editor-row"><input placeholder="Item description" value={x.name} onChange={(e) => setLineItems((p) => p.map((v, j) => j === i ? { ...v, name: e.target.value } : v))}/><select value={x.type} onChange={(e) => setLineItems((p) => p.map((v, j) => j === i ? { ...v, type: e.target.value } : v))}><option value="labor">Labor</option><option value="part">Part</option></select><input placeholder="SKU" value={x.sku} onChange={(e) => setLineItems((p) => p.map((v, j) => j === i ? { ...v, sku: e.target.value } : v))}/><input type="number" min={1} placeholder="Qty" value={x.qty} onChange={(e) => setLineItems((p) => p.map((v, j) => j === i ? { ...v, qty: Number(e.target.value) } : v))}/><input type="number" min={0} placeholder="Unit price" value={x.price} onChange={(e) => setLineItems((p) => p.map((v, j) => j === i ? { ...v, price: Number(e.target.value) } : v))}/></div>)}<button className="bf-btn bf-outline" onClick={() => setLineItems((p) => [...p, { name: "", type: "part", sku: "", qty: 1, price: 0 }])}>Add estimate line <Plus size={16} /></button>{btn("Submit estimate", "estimate", { items: lineItems })}</div>;
+  if (b.status === "PENDING" && advisor) return <div className="bf-action-stack">{btn("Confirm appointment", "confirm")}{btn("Decline appointment", "cancel")}</div>;
+  if (b.status === "CONFIRMED" && advisor) return <div className="bf-action-stack"><label>Assign technician<select value={form.userId || ""} onChange={(e) => setForm({ ...form, userId: e.target.value })}><option value="">Select a technician</option>{b.staff?.filter((x: any) => x.role === "technician").map((x: any) => <option key={x.userId} value={x.userId}>{x.user?.name}</option>)}</select></label>{btn("Assign technician", "assign", { userId: form.userId })}</div>;
+  if (b.status === "ASSIGNED" && tech) return btn("Start inspection", "inspect");
+  if ((b.status === "INSPECTING" && tech) || (b.status === "ESTIMATE_REJECTED" && (advisor || tech))) return estimateEditor;
+  if (b.status === "ESTIMATE_REVIEW" && advisor) return btn("Send estimate to customer", "send_estimate");
+  if (b.status === "AWAITING_CUSTOMER" && own) return <div className="bf-action-stack">{btn("Approve estimate", "approve")}{btn("Request revised estimate", "reject")}</div>;
+  if (b.status === "ESTIMATE_APPROVED" && advisor) return <div className="bf-action-stack"><label>Parts coordinator<select value={form.userId || ""} onChange={(e) => setForm({ ...form, userId: e.target.value })}><option value="">Select parts person</option>{b.staff?.filter((x: any) => x.role === "parts").map((x: any) => <option key={x.userId} value={x.userId}>{x.user?.name}</option>)}</select></label>{btn("Assign parts team", "assign_parts", { userId: form.userId })}</div>;
+  if (b.status === "PARTS_PENDING" && parts) return btn("Check parts availability", "check_parts");
+  if (b.status === "PARTS_ORDERED" && parts) return <div className="bf-action-stack"><p className="bf-note">Missing parts: {b.missingParts?.map((x: any) => x.name).join(", ") || "See orders"}</p>{btn("Receive ordered parts", "receive_parts")}</div>;
+  if (b.status === "PARTS_READY" && parts) return btn("Allocate parts and start repair", "allocate");
+  if (b.status === "IN_REPAIR" && tech) return btn("Send repair to QC", "submit_qc");
+  if (b.status === "QC_PENDING" && role === "qc") return btn("Claim QC inspection", "claim_qc");
+  if (b.status === "QC_IN_PROGRESS" && qc) return <div className="bf-action-stack"><label>Reason for QC failure<textarea value={form.issue || ""} onChange={(e) => setForm({ ...form, issue: e.target.value })} placeholder="What needs rework?" /></label>{btn("QC passed", "qc_pass")}{btn("QC failed - return to repair", "qc_fail", { issue: form.issue })}</div>;
+  if (b.status === "READY_FOR_PICKUP" && (advisor || own)) return btn("Confirm pickup and complete", "complete");
+  return <div className="bf-waiting"><Clock3 size={23}/><div><strong>Waiting for the next team</strong><p>The person assigned to this stage will move the job forward.</p></div></div>;
 }
